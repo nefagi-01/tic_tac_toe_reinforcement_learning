@@ -16,10 +16,10 @@ class TictactoeEnv:
             1 - place marked with X
             -1 - place marked with O
 
-        The game environment will recieve movement from two players in turn and update the grid.
+        The game environment will receive movement from two players in turn and update the grid.
 
     self.step:
-        recieve the movement of the player, update the grid
+        receive the movement of the player, update the grid
 
     The action space is [0-8], representing the 9 positions on the grid.
 
