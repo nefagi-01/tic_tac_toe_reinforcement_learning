@@ -55,6 +55,16 @@ class QPlayer:
 
     def get_Q_values(self):
         return self.Q_states_dict
+    
+    def act_test(self, grid):
+        self.previous_state = np.array2string(grid)
+        available_actions = self.empty(grid)
+        action_scores = self.Q_states_dict[self.previous_state][available_actions]
+
+        # Choose action
+        self.previous_action = self.choose_best_action(available_actions, action_scores)
+
+        return int(self.previous_action)
 
 
 class VariableEpsilonQPlayer(QPlayer):
@@ -75,15 +85,6 @@ class VariableEpsilonQPlayer(QPlayer):
     def update_epsilon(self, current_episode):
         self.epsilon = max(self.epsilon_min, self.epsilon_max * (1 - current_episode / self.n_star))
 
-    def act_test(self, grid):
-        self.previous_state = np.array2string(grid)
-        available_actions = self.empty(grid)
-        action_scores = self.Q_states_dict[self.previous_state][available_actions]
-
-        # Choose action
-        self.previous_action = self.choose_best_action(available_actions, action_scores)
-
-        return int(self.previous_action)
 
 
 def play_game(env, q_player, other_player, turns, other_learning=False, testing=False):
@@ -128,8 +129,8 @@ def compute_measures(env, q_player):
 
         if test == 250:
             turns = turns[::-1]
-            optimal_player = OptimalPlayer(0., turns[1])
-            random_player = OptimalPlayer(1., turns[1])
+            optimal_player.set_player(turns[1])
+            random_player.set_player(turns[1])
 
         M_opt_average += opt_reward
         M_rand_average += rand_reward
