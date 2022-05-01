@@ -73,9 +73,9 @@ class VariableEpsilonQPlayer(QPlayer):
         A class to implement a Q algorithm-based player.
     """
 
-    def __init__(self, alpha, gamma, epsilon_max, epsilon_min, n_star):
+    def __init__(self, alpha, gamma, epsilon_max, epsilon_min, n_star, q_values=None):
         # Algorithm parameters
-        super().__init__(alpha, gamma, None, None)
+        super().__init__(alpha, gamma, None, q_values)
         self.previous_state = None
         self.previous_action = None
         self.epsilon_max = epsilon_max
@@ -114,7 +114,7 @@ def play_game(env, q_player, other_player, turns, other_learning=False, testing=
     return env.reward(turns[0])
 
 
-def compute_measures(env, q_player):
+def compute_measures(env, q_player, n_trials=500):
     M_opt_average = 0.
     M_rand_average = 0.
 
@@ -123,11 +123,11 @@ def compute_measures(env, q_player):
     optimal_player = OptimalPlayer(0., turns[1])
     random_player = OptimalPlayer(1., turns[1])
 
-    for test in range(500):
+    for test in range(n_trials):
         opt_reward = play_game(env, q_player, optimal_player, turns, testing=True)
         rand_reward = play_game(env, q_player, random_player, turns, testing=True)
 
-        if test == 250:
+        if test == n_trials/2:
             turns = turns[::-1]
             optimal_player.set_player(turns[1])
             random_player.set_player(turns[1])
@@ -135,4 +135,4 @@ def compute_measures(env, q_player):
         M_opt_average += opt_reward
         M_rand_average += rand_reward
 
-    return M_opt_average / 500, M_rand_average / 500
+    return M_opt_average / n_trials, M_rand_average / n_trials
