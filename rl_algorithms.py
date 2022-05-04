@@ -40,9 +40,9 @@ class QPlayer:
             new_best_action = self.choose_best_action(new_available_actions, new_action_scores)
 
             self.Q_states_dict[self.previous_state][self.previous_action] += self.alpha * (
-                    reward - self.gamma * self.Q_states_dict[new_state][new_best_action])
+                    reward + self.gamma * self.Q_states_dict[new_state][new_best_action] - self.Q_states_dict[self.previous_state][self.previous_action])
         else:
-            self.Q_states_dict[self.previous_state][self.previous_action] += self.alpha * reward
+            self.Q_states_dict[self.previous_state][self.previous_action] += self.alpha * (reward - self.Q_states_dict[self.previous_state][self.previous_action])
 
     def empty(self, grid):
         available_actions = [i for i in range(9) if grid[int(i / 3), i % 3] == 0]
