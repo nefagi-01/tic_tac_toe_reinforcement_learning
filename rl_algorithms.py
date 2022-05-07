@@ -2,7 +2,11 @@ import numpy as np
 import random
 from collections import defaultdict
 from tic_env import *
-
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch import optim
+from scipy.special import softmax
 
 class QPlayer:
     """
@@ -66,7 +70,6 @@ class QPlayer:
 
         return int(self.previous_action)
 
-
 class VariableEpsilonQPlayer(QPlayer):
     """
     Description:
@@ -85,8 +88,6 @@ class VariableEpsilonQPlayer(QPlayer):
     def update_epsilon(self, current_episode):
         self.epsilon = max(self.epsilon_min, self.epsilon_max * (1 - current_episode / self.n_star))
 
-
-
 def play_game(env, q_player, other_player, turns, other_learning=False, testing=False):
     env.reset()
     grid, _, __ = env.observe()
@@ -99,9 +100,7 @@ def play_game(env, q_player, other_player, turns, other_learning=False, testing=
             if j > 1 and not testing:  # if it's not the first time the QPlayer is playing
                 q_player.learn(grid, 0, False)
             move = q_player.act(grid) if not testing else q_player.act_test(grid)
-
         grid, end, winner = env.step(move, print_grid=False)
-
         if end:
             break
 
@@ -136,3 +135,114 @@ def compute_measures(env, q_player, n_trials=500):
         M_rand_average += rand_reward
 
     return M_opt_average / n_trials, M_rand_average / n_trials
+
+
+
+
+class DeepQPlayer:
+    """
+    Description:
+        A class to implement a Deep Q-learning algorithm-based player.
+    """
+    def __init__(self, epsilon, gamma=0.99, lr=5e-4):
+        # Algorithm parameters
+        self.epsilon = epsilon
+        self.gamma = gamma  # discount factor
+        self.network = nn.Sequential(
+                        nn.Linear(18,128),
+                        nn.ReLU(),
+                        nn.Linear(128,128),
+                        nn.ReLU(),
+                        nn.Linear(128,9),
+                        nn.ReLU()
+                        )
+        self.criterion = nn.HuberLoss()
+        self.optimizer = optim.Adam(self.network.parameters(), lr=lr)
+        self.previous_Q = torch.zeros(0)
+        self.previous_Q.requires_grad = True
+        self.current_Q = torch.zeros(0)
+        self.current_Q.requires_grad = True
+
+    def grid_to_tensor(self, grid):
+        state = torch.zeros((3,3,2))
+        state[:,:,0][np.where(grid == 1)] = 1
+        state[:,:,1][np.where(grid == -1)] = 1
+        return state
+    
+    def act(self, grid):
+        #From grid to state tensor
+        state = self.grid_to_tensor(grid)
+        #Compute Q_values
+        Q_values = self.network(state.view(-1))
+        # Choose action
+        action = np.random.randint(9) if np.random.random() < self.epsilon else self.choose_best_action(Q_values)
+        with torch.no_grad():
+            self.previous_Q = self.current_Q
+            self.current_Q = Q_values[action]
+        return action
+    
+    def act_test(self, grid):
+        #From grid to state tensor
+        state = self.grid_to_tensor(grid)
+        #Compute Q_values
+        Q_values = self.network(state.view(-1))
+        # Choose action
+        action = self.choose_best_action(Q_values)
+
+    def learn(self, reward, end):
+        if not end:
+            target = self.current_Q.clone().detach()*self.gamma + reward
+            output = self.previous_Q
+            loss = self.criterion(output, target)
+            self.network.zero_grad()
+            loss.backward()
+            self.optimizer.step()
+        else:
+            target = reward
+            output = self.current_Q
+            loss = self.criterion(output, target)
+            self.network.zero_grad()
+            loss.backward()
+            self.optimizer.step()
+            
+
+    
+
+    def choose_best_action(self, Q_values):
+        Q_values_numpy = Q_values.clone().detach().numpy()
+        Q_values_softmax = softmax(Q_values_numpy)
+        max_scores_indices = np.where(Q_values_softmax == np.max(Q_values_softmax))[0]
+        chosen_max_score_index = np.random.choice(max_scores_indices)
+        return int(chosen_max_score_index)
+        
+
+def play_deep_game(env, q_player, other_player, turns, other_learning=False, testing=False):
+    env.reset()
+    grid, _, __ = env.observe()
+    for j in range(9):
+        if env.current_player == turns[1]:
+            if other_learning and j > 1 and not testing:  # if it's not the first time the QPlayer is playing
+                other_player.learn(grid, 0, False)
+            move = other_player.act(grid)
+        else:
+            move = q_player.act(grid) if not testing else q_player.act_test(grid)
+            if j > 1 and not testing:  # if it's not the first time the QPlayer is playing
+                q_player.learn(torch.tensor(0), end)
+        
+        try:
+            grid, end, winner = env.step(move, print_grid=False)
+        #catch unavailable action and finish game
+        except ValueError:
+            if not testing:
+                q_player.learn(torch.tensor(-1), end)
+                return -1
+        if end:
+            break
+
+    if not testing:
+        q_player.learn(torch.tensor(env.reward(turns[0])), end)
+
+        if other_learning:
+            other_player.learn(grid, env.reward(turns[1]), True)
+
+    return env.reward(turns[0])
