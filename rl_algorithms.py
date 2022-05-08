@@ -1,6 +1,6 @@
 import numpy as np
 import random
-from collections import defaultdict
+from collections import defaultdict, namedtuple, deque
 from tic_env import *
 import torch
 import torch.nn as nn
@@ -113,7 +113,7 @@ def play_game(env, q_player, other_player, turns, other_learning=False, testing=
     return env.reward(turns[0])
 
 
-def compute_measures(env, q_player, n_trials=500):
+def compute_measures(env, q_player, n_trials=500, deep=False):
     M_opt_average = 0.
     M_rand_average = 0.
 
@@ -123,8 +123,12 @@ def compute_measures(env, q_player, n_trials=500):
     random_player = OptimalPlayer(1., turns[1])
 
     for test in range(n_trials):
-        opt_reward = play_game(env, q_player, optimal_player, turns, testing=True)
-        rand_reward = play_game(env, q_player, random_player, turns, testing=True)
+        if not deep:
+            opt_reward = play_game(env, q_player, optimal_player, turns, testing=True)
+            rand_reward = play_game(env, q_player, random_player, turns, testing=True)
+        else:
+            _, opt_reward = play_deep_game(env, q_player, optimal_player, turns, testing=True)
+            _, rand_reward = play_deep_game(env, q_player, random_player, turns, testing=True)
 
         if test == n_trials/2:
             turns = turns[::-1]
@@ -137,6 +141,22 @@ def compute_measures(env, q_player, n_trials=500):
     return M_opt_average / n_trials, M_rand_average / n_trials
 
 
+Transition = namedtuple('Transition', ('state', 'action', 'next_state', 'reward'))
+
+class ReplayMemory(object):
+
+    def __init__(self, capacity):
+        self.memory = deque([],maxlen=capacity)
+
+    def push(self, *args):
+        """Save a transition"""
+        self.memory.append(Transition(*args))
+
+    def sample(self, batch_size):
+        return random.sample(self.memory, batch_size)
+
+    def __len__(self):
+        return len(self.memory)
 
 
 class DeepQPlayer:
@@ -144,104 +164,152 @@ class DeepQPlayer:
     Description:
         A class to implement a Deep Q-learning algorithm-based player.
     """
-    def __init__(self, epsilon, gamma=0.99, lr=5e-4):
+    def __init__(self, epsilon, gamma=0.99, lr=5e-4, capacity=10000, batch_size=64):
         # Algorithm parameters
-        self.epsilon = epsilon
+        self.epsilon = epsilon 
         self.gamma = gamma  # discount factor
-        self.network = nn.Sequential(
+        self.target_net = nn.Sequential(
                         nn.Linear(18,128),
                         nn.ReLU(),
                         nn.Linear(128,128),
                         nn.ReLU(),
-                        nn.Linear(128,9),
-                        nn.ReLU()
+                        nn.Linear(128,9)
                         )
+        self.policy_net = nn.Sequential(
+                        nn.Linear(18,128),
+                        nn.ReLU(),
+                        nn.Linear(128,128),
+                        nn.ReLU(),
+                        nn.Linear(128,9)
+                        )
+        self.target_net.load_state_dict(self.policy_net.state_dict()) #initialize networks to have same weights
         self.criterion = nn.HuberLoss()
-        self.optimizer = optim.Adam(self.network.parameters(), lr=lr)
-        self.previous_Q = None
-        self.current_Q = None
+        self.optimizer = optim.Adam(self.policy_net.parameters(), lr=lr) #optimizer used on policy_net
+        self.memory = ReplayMemory(capacity) #buffer
+        self.batch_size = batch_size
+        self.steps_done = 0
+        self.previous_state = None
+        self.action = None
+
 
     def grid_to_tensor(self, grid):
+        """
+        Description:
+            A function to transform the grid into a 1-D tensor of size 18.
+        """
+        if grid is None:
+            return None
         state = torch.zeros((3,3,2))
         state[:,:,0][np.where(grid == 1)] = 1
         state[:,:,1][np.where(grid == -1)] = 1
-        return state
+        return state.view(-1)
     
-    def act(self, grid):
+    def act(self, grid, reward):
         #From grid to state tensor
         state = self.grid_to_tensor(grid)
-        #Compute Q_values
-        Q_values = self.network(state.view(-1))
-        # Choose action
-        action = np.random.randint(9) if np.random.random() < self.epsilon else self.choose_best_action(Q_values)
-        with torch.no_grad():
-            self.previous_Q = self.current_Q
-            self.current_Q = Q_values[action]
-        return action
+        
+        #if at least one move has been done add Transition in the buffer
+        if self.steps_done > 0:
+            self.memory.push(self.previous_state, torch.tensor([self.action]), state, torch.tensor([reward]))
+
+        #None grid means game is finished
+        if grid is None:
+            return
+
+        #Save state in previous_state
+        self.previous_state = state
+        
+        # Choose action with epsilon-greedy
+        self.steps_done += 1
+        if np.random.random() > self.epsilon:
+            with torch.no_grad():
+                action = self.policy_net(state).argmax().int().item()
+        else:
+            action = int(np.random.randint(9))
+        self.action = action
+        return action 
     
     def act_test(self, grid):
         #From grid to state tensor
         state = self.grid_to_tensor(grid)
-        #Compute Q_values
-        Q_values = self.network(state.view(-1))
-        # Choose action
-        action = self.choose_best_action(Q_values)
 
-    def learn(self, reward, end):
-        if not end:
-            target = self.current_Q.detach()*self.gamma + reward
-            output = self.previous_Q
-            loss = self.criterion(output, target)
-            self.network.zero_grad()
-            loss.backward()
-            self.optimizer.step()
-        else:
-            target = reward
-            output = self.current_Q
-            loss = self.criterion(output, target)
-            self.network.zero_grad()
-            loss.backward()
-            self.optimizer.step()
-            
-
-    
-
-    def choose_best_action(self, Q_values):
         with torch.no_grad():
-            Q_values_numpy = Q_values.numpy()
-            Q_values_softmax = softmax(Q_values_numpy)
-            max_scores_indices = np.where(Q_values_softmax == np.max(Q_values_softmax))[0]
-            chosen_max_score_index = np.random.choice(max_scores_indices)
-            return int(chosen_max_score_index)
+            action = self.policy_net(state).argmax().int().item()
+
+        return action
+
+    def optimize_policy(self):
+        if len(self.memory) < self.batch_size:
+            return None
+        transitions = self.memory.sample(self.batch_size)
+        batch = Transition(*zip(*transitions))
+
+        non_final_mask = torch.tensor(tuple(map(lambda s: s is not None,
+                                          batch.next_state)), dtype=torch.bool)
+        non_final_next_states = torch.stack([s for s in batch.next_state
+                                                    if s is not None])
+        state_batch = torch.stack(batch.state)
+        action_batch = torch.cat(batch.action)
+        reward_batch = torch.cat(batch.reward)
+
+        state_action_values = self.policy_net(state_batch).gather(1, action_batch.view(-1,1))
+
+        next_state_values = torch.zeros(self.batch_size)
+        next_state_values[non_final_mask] = self.target_net(non_final_next_states).max(1)[0].detach()
+
+        expected_state_action_values = (next_state_values * self.gamma) + reward_batch
+
+        loss = self.criterion(state_action_values, expected_state_action_values.unsqueeze(1))
+
+        self.optimizer.zero_grad()
+        loss.backward()
+
+        for param in self.policy_net.parameters():
+            param.grad.data.clamp_(-1, 1)
+        self.optimizer.step()
+        return loss
+    
+    def update_target(self):
+        self.target_net.load_state_dict(self.policy_net.state_dict())
         
+
 
 def play_deep_game(env, q_player, other_player, turns, other_learning=False, testing=False):
     env.reset()
     grid, _, __ = env.observe()
+    average_loss = 0.
+    losses = []
     for j in range(9):
         if env.current_player == turns[1]:
-            if other_learning and j > 1 and not testing:  # if it's not the first time the QPlayer is playing
-                other_player.learn(grid, 0, False)
             move = other_player.act(grid)
         else:
-            move = q_player.act(grid) if not testing else q_player.act_test(grid)
-            if j > 1 and not testing:  # if it's not the first time the QPlayer is playing
-                q_player.learn(torch.tensor(0.), False)
-        
+            move = q_player.act(grid, 0) if not testing else q_player.act_test(grid)
+            if not testing:
+                loss =  q_player.optimize_policy()
+                if loss is not None:
+                    losses.append(loss.item())
         try:
             grid, end, winner = env.step(move, print_grid=False)
-        #catch unavailable action and finish game
         except ValueError:
             if not testing:
-                q_player.learn(torch.tensor(-1.), True)
-                return -1
+                q_player.act(None,-1)
+            return losses, -1
         if end:
             break
-
+    
     if not testing:
-        q_player.learn(torch.tensor(float(env.reward(turns[0]))), True)
+        q_player.act(None,env.reward(turns[0]))
 
-        if other_learning:
-            other_player.learn(grid, env.reward(turns[1]), True)
+    return losses, env.reward(turns[0])
 
-    return env.reward(turns[0])
+class DeepVariableEpsilonQPlayer(DeepQPlayer):
+  
+    def __init__(self, epsilon_max, epsilon_min, n_star, epsilon, gamma=0.99, lr=5e-4, capacity=10000, batch_size=64):
+        # Algorithm parameters
+        super().__init__(epsilon, gamma=0.99, lr=5e-4, capacity=10000, batch_size=64)
+        self.epsilon_max = epsilon_max
+        self.epsilon_min = epsilon_min
+        self.n_star = n_star
+
+    def update_epsilon(self, current_episode):
+        self.epsilon = max(self.epsilon_min, self.epsilon_max * (1 - current_episode / self.n_star))
