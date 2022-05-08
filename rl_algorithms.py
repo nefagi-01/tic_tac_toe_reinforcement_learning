@@ -158,10 +158,8 @@ class DeepQPlayer:
                         )
         self.criterion = nn.HuberLoss()
         self.optimizer = optim.Adam(self.network.parameters(), lr=lr)
-        self.previous_Q = torch.zeros(0)
-        self.previous_Q.requires_grad = True
-        self.current_Q = torch.zeros(0)
-        self.current_Q.requires_grad = True
+        self.previous_Q = None
+        self.current_Q = None
 
     def grid_to_tensor(self, grid):
         state = torch.zeros((3,3,2))
@@ -191,7 +189,7 @@ class DeepQPlayer:
 
     def learn(self, reward, end):
         if not end:
-            target = self.current_Q.clone().detach()*self.gamma + reward
+            target = self.current_Q.detach()*self.gamma + reward
             output = self.previous_Q
             loss = self.criterion(output, target)
             self.network.zero_grad()
@@ -209,11 +207,12 @@ class DeepQPlayer:
     
 
     def choose_best_action(self, Q_values):
-        Q_values_numpy = Q_values.clone().detach().numpy()
-        Q_values_softmax = softmax(Q_values_numpy)
-        max_scores_indices = np.where(Q_values_softmax == np.max(Q_values_softmax))[0]
-        chosen_max_score_index = np.random.choice(max_scores_indices)
-        return int(chosen_max_score_index)
+        with torch.no_grad():
+            Q_values_numpy = Q_values.numpy()
+            Q_values_softmax = softmax(Q_values_numpy)
+            max_scores_indices = np.where(Q_values_softmax == np.max(Q_values_softmax))[0]
+            chosen_max_score_index = np.random.choice(max_scores_indices)
+            return int(chosen_max_score_index)
         
 
 def play_deep_game(env, q_player, other_player, turns, other_learning=False, testing=False):
@@ -227,20 +226,20 @@ def play_deep_game(env, q_player, other_player, turns, other_learning=False, tes
         else:
             move = q_player.act(grid) if not testing else q_player.act_test(grid)
             if j > 1 and not testing:  # if it's not the first time the QPlayer is playing
-                q_player.learn(torch.tensor(0), end)
+                q_player.learn(torch.tensor(0.), False)
         
         try:
             grid, end, winner = env.step(move, print_grid=False)
         #catch unavailable action and finish game
         except ValueError:
             if not testing:
-                q_player.learn(torch.tensor(-1), end)
+                q_player.learn(torch.tensor(-1.), True)
                 return -1
         if end:
             break
 
     if not testing:
-        q_player.learn(torch.tensor(env.reward(turns[0])), end)
+        q_player.learn(torch.tensor(float(env.reward(turns[0]))), True)
 
         if other_learning:
             other_player.learn(grid, env.reward(turns[1]), True)
