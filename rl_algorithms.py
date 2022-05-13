@@ -126,6 +126,7 @@ def compute_measures(env, q_player, n_trials=500, deep=False):
 
     optimal_player = OptimalPlayer(0., turns[1])
     random_player = OptimalPlayer(1., turns[1])
+    q_player.set_player(turns[0])
 
     for test in range(n_trials):
         if not deep:
@@ -137,6 +138,7 @@ def compute_measures(env, q_player, n_trials=500, deep=False):
 
         if test == n_trials / 2:
             turns = turns[::-1]
+            q_player.set_player(turns[0])
             optimal_player.set_player(turns[1])
             random_player.set_player(turns[1])
 
@@ -164,6 +166,12 @@ class ReplayMemory(object):
     def __len__(self):
         return len(self.memory)
 
+
+def printami(lista, nome):
+        print("\n"+nome)
+        for x in lista:
+            print(x)
+        input("Press Enter to continue...")
 
 class DeepQPlayer:
     """
@@ -199,6 +207,13 @@ class DeepQPlayer:
         self.action = None
         self.player = None
 
+
+    
+    def reset_attributes(self):
+        self.action = None
+        self.previous_state = None
+        self.steps_done = 0
+
     def grid_to_tensor(self, grid):
         """
         Description:
@@ -214,11 +229,9 @@ class DeepQPlayer:
     def act(self, grid, reward):
         # From grid to state tensor
         state = self.grid_to_tensor(grid)
-
         # if at least one move has been done add Transition in the buffer
         if self.steps_done > 0:
             self.memory.push(self.previous_state, torch.tensor([self.action]), state, torch.tensor([reward]))
-
         # None grid means game is finished
         if grid is None:
             return
@@ -228,7 +241,7 @@ class DeepQPlayer:
 
         # Choose action with epsilon-greedy
         self.steps_done += 1
-        if np.random.random() > self.epsilon:
+        if np.random.random() >= self.epsilon:
             with torch.no_grad():
                 action = self.policy_net(state).argmax().int().item()
         else:
@@ -245,28 +258,47 @@ class DeepQPlayer:
 
         return action
 
+    
+
     def optimize_policy(self):
         if len(self.memory) < self.batch_size:
             return None
         transitions = self.memory.sample(self.batch_size)
         batch = Transition(*zip(*transitions))
 
-        non_final_mask = torch.tensor(tuple(map(lambda s: s is not None,
-                                                batch.next_state)), dtype=torch.bool)
-        non_final_next_states = torch.stack([s for s in batch.next_state
-                                             if s is not None])
-        state_batch = torch.stack(batch.state)
-        action_batch = torch.cat(batch.action)
-        reward_batch = torch.cat(batch.reward)
 
-        state_action_values = self.policy_net(state_batch).gather(1, action_batch.view(-1, 1))
+        if self.batch_size > 1 :
+            non_final_mask = torch.tensor(tuple(map(lambda s: s is not None,
+                                                    batch.next_state)), dtype=torch.bool)
+            non_final_next_states = torch.stack([s for s in batch.next_state
+                                                if s is not None])
+            state_batch = torch.stack(batch.state)
+            action_batch = torch.cat(batch.action)
+            reward_batch = torch.cat(batch.reward)
+        
 
-        next_state_values = torch.zeros(self.batch_size)
-        next_state_values[non_final_mask] = self.target_net(non_final_next_states).max(1)[0].detach()
+            
+            state_action_values = self.policy_net(state_batch).gather(1, action_batch.view(-1, 1))
+            next_state_values = torch.zeros(self.batch_size)
+            next_state_values[non_final_mask] = self.target_net(non_final_next_states).max(1)[0].detach()
 
-        expected_state_action_values = (next_state_values * self.gamma) + reward_batch
+            expected_state_action_values = (next_state_values * self.gamma) + reward_batch
 
-        loss = self.criterion(state_action_values, expected_state_action_values.unsqueeze(1))
+            loss = self.criterion(state_action_values, expected_state_action_values.unsqueeze(1))
+
+        else :
+            state_batch = batch.state[0]
+            action_batch = batch.action[0]
+            reward_batch = batch.reward[0]
+            next_state_batch = batch.next_state[0]
+            if next_state_batch is None:
+                next_state_values = torch.zeros(self.batch_size)
+            else:
+                next_state_values = self.target_net(next_state_batch).argmax().detach()
+            state_action_values = self.policy_net(state_batch)[action_batch]
+            expected_state_action_values = (next_state_values * self.gamma) + reward_batch
+
+            loss = self.criterion(state_action_values, expected_state_action_values)
 
         self.optimizer.zero_grad()
         loss.backward()
@@ -293,7 +325,7 @@ def play_deep_game(env, q_player, other_player, turns, other_learning=False, tes
             move = other_player.act(grid)
         else:
             move = q_player.act(grid, 0) if not testing else q_player.act_test(grid)
-            if not testing:
+            if not testing and j > 1:
                 loss = q_player.optimize_policy()
                 if loss is not None:
                     losses.append(loss.item())
@@ -302,12 +334,15 @@ def play_deep_game(env, q_player, other_player, turns, other_learning=False, tes
         except ValueError:
             if not testing:
                 q_player.act(None, -1)
+                loss = q_player.optimize_policy()
+                if loss is not None:
+                    losses.append(loss.item())
             return losses, -1
         if end:
             break
-
     if not testing:
         q_player.act(None, env.reward(turns[0]))
+    
 
     return losses, env.reward(turns[0])
 
@@ -316,7 +351,7 @@ class DeepVariableEpsilonQPlayer(DeepQPlayer):
 
     def __init__(self, epsilon_max, epsilon_min, n_star, epsilon, gamma=0.99, lr=5e-4, capacity=10000, batch_size=64):
         # Algorithm parameters
-        super().__init__(epsilon, gamma=0.99, lr=5e-4, capacity=10000, batch_size=64)
+        super().__init__(epsilon, gamma=0.99, lr=5e-4, capacity=capacity, batch_size=batch_size)
         self.epsilon_max = epsilon_max
         self.epsilon_min = epsilon_min
         self.n_star = n_star
