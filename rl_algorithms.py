@@ -283,8 +283,6 @@ class DeepQPlayer:
             next_state_values[non_final_mask] = self.target_net(non_final_next_states).max(1)[0].detach()
 
             expected_state_action_values = (next_state_values * self.gamma) + reward_batch
-            print(state_action_values)
-            print(expected_state_action_values.unsqueeze(1))
 
             loss = self.criterion(state_action_values, expected_state_action_values.unsqueeze(1))
 
