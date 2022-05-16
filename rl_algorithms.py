@@ -268,19 +268,21 @@ class DeepQPlayer:
             return None
         transitions = self.memory.sample(self.batch_size)
         batch = Transition(*zip(*transitions))
-
         if self.batch_size > 1:
             non_final_mask = torch.tensor(tuple(map(lambda s: s is not None,
                                                     batch.next_state)), dtype=torch.bool)
-            non_final_next_states = torch.stack([s for s in batch.next_state
-                                                 if s is not None])
+            next_state_values = torch.zeros(self.batch_size)
+
+            if torch.any(non_final_mask):
+                non_final_next_states = torch.stack([s for s in batch.next_state if s is not None])
+                next_state_values[non_final_mask] = self.target_net(non_final_next_states).max(1)[0].detach()
+
+            
             state_batch = torch.stack(batch.state)
             action_batch = torch.cat(batch.action)
             reward_batch = torch.cat(batch.reward)
 
             state_action_values = self.policy_net(state_batch).gather(1, action_batch.view(-1, 1))
-            next_state_values = torch.zeros(self.batch_size)
-            next_state_values[non_final_mask] = self.target_net(non_final_next_states).max(1)[0].detach()
 
             expected_state_action_values = (next_state_values * self.gamma) + reward_batch
 
