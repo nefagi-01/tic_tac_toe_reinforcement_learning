@@ -180,29 +180,32 @@ class DeepQPlayer:
         A class to implement a Deep Q-learning algorithm-based player.
     """
 
-    def __init__(self, epsilon, gamma=0.99, lr=5e-4, capacity=10000, batch_size=64):
+    def __init__(self, epsilon, gamma=0.99, lr=5e-4, capacity=10000, batch_size=64, shared_networks=None):
         # Algorithm parameters
         self.epsilon = epsilon
         self.gamma = gamma  # discount factor
-        self.target_net = nn.Sequential(
-            nn.Linear(18, 128),
-            nn.ReLU(),
-            nn.Linear(128, 128),
-            nn.ReLU(),
-            nn.Linear(128, 9)
-        )
-        self.policy_net = nn.Sequential(
-            nn.Linear(18, 128),
-            nn.ReLU(),
-            nn.Linear(128, 128),
-            nn.ReLU(),
-            nn.Linear(128, 9)
-        )
-        self.target_net.load_state_dict(self.policy_net.state_dict())  # initialize networks to have same weights
-        self.target_net.eval()
+        if shared_networks is not None:
+            self.policy_net, self.target_net, self.memory = shared_networks
+        else:
+            self.target_net = nn.Sequential(
+                nn.Linear(18, 128),
+                nn.ReLU(),
+                nn.Linear(128, 128),
+                nn.ReLU(),
+                nn.Linear(128, 9)
+            )
+            self.policy_net = nn.Sequential(
+                nn.Linear(18, 128),
+                nn.ReLU(),
+                nn.Linear(128, 128),
+                nn.ReLU(),
+                nn.Linear(128, 9)
+            )
+            self.target_net.load_state_dict(self.policy_net.state_dict())  # initialize networks to have same weights
+            self.target_net.eval()
+            self.memory = ReplayMemory(capacity)  # buffer
         self.criterion = nn.HuberLoss()
         self.optimizer = optim.Adam(self.policy_net.parameters(), lr=lr)  # optimizer used on policy_net
-        self.memory = ReplayMemory(capacity)  # buffer
         self.batch_size = batch_size
         self.steps_done = 0
         self.previous_state = None
@@ -311,6 +314,9 @@ class DeepQPlayer:
     def set_player(self, player='X'):
         self.player = 1. if player == 'X' else -1.
 
+    def get_networks(self):
+        return self.policy_net, self.target_net, self.memory
+
 
 def play_deep_game(env, q_player, other_player, turns, other_learning=False, testing=False):
     # Update players
@@ -325,8 +331,16 @@ def play_deep_game(env, q_player, other_player, turns, other_learning=False, tes
     average_loss = 0.
     losses = []
     for j in range(9):
-        if env.current_player == turns[1]:
-            move = other_player.act(grid)
+        current_player = q_player if env.current_player == turns[0] else other_player
+        if current_player == other_player:
+            if other_learning:
+                move = other_player.act(grid, 0) if not testing else other_player.act_test(grid)
+                if not testing:
+                    loss = other_player.optimize_policy()
+                    if loss is not None:
+                        losses.append(loss.item())
+            else:
+                move = other_player.act(grid)
         else:
             move = q_player.act(grid, 0) if not testing else q_player.act_test(grid)
             if not testing:
@@ -337,8 +351,8 @@ def play_deep_game(env, q_player, other_player, turns, other_learning=False, tes
             grid, end, winner = env.step(move, print_grid=False)
         except ValueError:
             if not testing:
-                q_player.act(None, -1)
-                loss = q_player.optimize_policy()
+                current_player.act(None, -1)
+                loss = current_player.optimize_policy()
                 if loss is not None:
                     losses.append(loss.item())
             return losses, -1
@@ -346,15 +360,16 @@ def play_deep_game(env, q_player, other_player, turns, other_learning=False, tes
             break
     if not testing:
         q_player.act(None, env.reward(turns[0]))
+        if other_learning:
+            other_player.act(None, env.reward(turns[1]))
 
     return losses, env.reward(turns[0])
 
 
 class DeepVariableEpsilonQPlayer(DeepQPlayer):
 
-    def __init__(self, epsilon_max, epsilon_min, n_star, epsilon, gamma=0.99, lr=5e-4, capacity=10000, batch_size=64):
-        # Algorithm parameters
-        super().__init__(epsilon, gamma=gamma, lr=lr, capacity=capacity, batch_size=batch_size)
+    def __init__(self, epsilon_max, epsilon_min, n_star, epsilon, gamma=0.99, lr=5e-4, capacity=10000, batch_size=64, shared_networks=None):
+        super().__init__(epsilon, gamma=gamma, lr=lr, capacity=capacity, batch_size=batch_size, shared_networks=shared_networks)
         self.epsilon_max = epsilon_max
         self.epsilon_min = epsilon_min
         self.n_star = n_star
