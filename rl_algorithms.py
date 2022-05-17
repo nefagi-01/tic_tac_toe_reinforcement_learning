@@ -180,7 +180,7 @@ class DeepQPlayer:
         A class to implement a Deep Q-learning algorithm-based player.
     """
 
-    def __init__(self, epsilon, gamma=0.99, lr=5e-4, capacity=10000, batch_size=64, shared_networks=None):
+    def __init__(self, epsilon, gamma=0.99, lr=5e-5, capacity=10000, batch_size=64, shared_networks=None):
         # Algorithm parameters
         self.epsilon = epsilon
         self.gamma = gamma  # discount factor
@@ -189,16 +189,16 @@ class DeepQPlayer:
         else:
             self.target_net = nn.Sequential(
                 nn.Linear(18, 128),
-                nn.ReLU(),
+                nn.LeakyReLU(),
                 nn.Linear(128, 128),
-                nn.ReLU(),
+                nn.LeakyReLU(),
                 nn.Linear(128, 9)
             )
             self.policy_net = nn.Sequential(
                 nn.Linear(18, 128),
-                nn.ReLU(),
+                nn.LeakyReLU(),
                 nn.Linear(128, 128),
-                nn.ReLU(),
+                nn.LeakyReLU(),
                 nn.Linear(128, 9)
             )
             self.target_net.load_state_dict(self.policy_net.state_dict())  # initialize networks to have same weights
@@ -224,11 +224,11 @@ class DeepQPlayer:
         """
         if grid is None:
             return None
-        #print("PLAYER: ", self.player)
+        # print("PLAYER: ", self.player)
         state = torch.zeros((3, 3, 2))
         state[:, :, 0][np.where(grid == self.player)] = 1
         state[:, :, 1][np.where((grid != self.player) & (grid != 0))] = 1
-        #print("GRID", grid, "\nSTATE Q player", state[:, :, 0], "\nSTATE other player", state[:, :, 1])
+        # print("GRID", grid, "\nSTATE Q player", state[:, :, 0], "\nSTATE other player", state[:, :, 1])
         return state.view(-1)
 
     def act(self, grid, reward):
@@ -277,7 +277,6 @@ class DeepQPlayer:
                 non_final_next_states = torch.stack([s for s in batch.next_state if s is not None])
                 next_state_values[non_final_mask] = self.target_net(non_final_next_states).max(1)[0].detach()
 
-            
             state_batch = torch.stack(batch.state)
             action_batch = torch.cat(batch.action)
             reward_batch = torch.cat(batch.reward)
@@ -370,8 +369,10 @@ def play_deep_game(env, q_player, other_player, turns, other_learning=False, tes
 
 class DeepVariableEpsilonQPlayer(DeepQPlayer):
 
-    def __init__(self, epsilon_max, epsilon_min, n_star, epsilon, gamma=0.99, lr=5e-4, capacity=10000, batch_size=64, shared_networks=None):
-        super().__init__(epsilon, gamma=gamma, lr=lr, capacity=capacity, batch_size=batch_size, shared_networks=shared_networks)
+    def __init__(self, epsilon_max, epsilon_min, n_star, epsilon, gamma=0.99, lr=5e-4, capacity=10000, batch_size=64,
+                 shared_networks=None):
+        super().__init__(epsilon, gamma=gamma, lr=lr, capacity=capacity, batch_size=batch_size,
+                         shared_networks=shared_networks)
         self.epsilon_max = epsilon_max
         self.epsilon_min = epsilon_min
         self.n_star = n_star
