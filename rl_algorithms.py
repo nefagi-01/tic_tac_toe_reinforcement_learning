@@ -231,6 +231,10 @@ class DeepQPlayer:
         # print("GRID", grid, "\nSTATE Q player", state[:, :, 0], "\nSTATE other player", state[:, :, 1])
         return state.view(-1)
 
+    def empty(self, grid):
+        available_actions = [i for i in range(9) if grid[int(i / 3), i % 3] == 0]
+        return available_actions
+
     def act(self, grid, reward):
         # From grid to state tensor
         state = self.grid_to_tensor(grid)
@@ -250,7 +254,7 @@ class DeepQPlayer:
             with torch.no_grad():
                 action = self.policy_net(state).argmax().int().item()
         else:
-            action = int(np.random.randint(9))
+            action = int(np.random.choice(self.empty(grid)))
         self.action = action
         return action
 
