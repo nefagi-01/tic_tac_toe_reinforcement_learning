@@ -189,16 +189,16 @@ class DeepQPlayer:
         else:
             self.target_net = nn.Sequential(
                 nn.Linear(18, 128),
-                nn.LeakyReLU(),
+                nn.ReLU(),
                 nn.Linear(128, 128),
-                nn.LeakyReLU(),
+                nn.ReLU(),
                 nn.Linear(128, 9)
             )
             self.policy_net = nn.Sequential(
                 nn.Linear(18, 128),
-                nn.LeakyReLU(),
+                nn.ReLU(),
                 nn.Linear(128, 128),
-                nn.LeakyReLU(),
+                nn.ReLU(),
                 nn.Linear(128, 9)
             )
             self.target_net.load_state_dict(self.policy_net.state_dict())  # initialize networks to have same weights
@@ -207,15 +207,9 @@ class DeepQPlayer:
         self.criterion = nn.HuberLoss()
         self.optimizer = optim.Adam(self.policy_net.parameters(), lr=lr)  # optimizer used on policy_net
         self.batch_size = batch_size
-        self.steps_done = 0
         self.previous_state = None
         self.action = None
         self.player = None
-
-    def reset_attributes(self):
-        self.action = None
-        self.previous_state = None
-        self.steps_done = 0
 
     def grid_to_tensor(self, grid):
         """
@@ -235,21 +229,14 @@ class DeepQPlayer:
         available_actions = [i for i in range(9) if grid[int(i / 3), i % 3] == 0]
         return available_actions
 
-    def act(self, grid, reward):
+    def act(self, grid):
         # From grid to state tensor
         state = self.grid_to_tensor(grid)
-        # if at least one move has been done add Transition in the buffer
-        if self.steps_done > 0:
-            self.memory.push(self.previous_state, torch.tensor([self.action]), state, torch.tensor([reward]))
-        # None grid means game is finished
-        if grid is None:
-            return None
 
         # Save state in previous_state
         self.previous_state = state
 
         # Choose action with epsilon-greedy
-        self.steps_done += 1
         if np.random.random() >= self.epsilon:
             with torch.no_grad():
                 action = self.policy_net(state).argmax().int().item()
@@ -267,11 +254,18 @@ class DeepQPlayer:
 
         return action
 
-    def optimize_policy(self):
+    def save_transition(self, grid, reward):
+        # From grid to state tensor
+        state = self.grid_to_tensor(grid)
+        self.memory.push(self.previous_state, torch.tensor([self.action]), state, torch.tensor([reward]))
+
+    def compute_loss(self):
         if len(self.memory) < self.batch_size:
             return None
+
         transitions = self.memory.sample(self.batch_size)
         batch = Transition(*zip(*transitions))
+
         if self.batch_size > 1:
             non_final_mask = torch.tensor(tuple(map(lambda s: s is not None,
                                                     batch.next_state)), dtype=torch.bool)
@@ -305,13 +299,17 @@ class DeepQPlayer:
 
             loss = self.criterion(state_action_values, expected_state_action_values)
 
+        return loss
+
+    def learn(self, loss):
+        if len(self.memory) < self.batch_size:
+            return None
+
         self.optimizer.zero_grad()
         loss.backward()
-
         for param in self.policy_net.parameters():
             param.grad.data.clamp_(-1, 1)
         self.optimizer.step()
-        return loss
 
     def update_target(self):
         self.target_net.load_state_dict(self.policy_net.state_dict())
@@ -322,58 +320,61 @@ class DeepQPlayer:
     def get_networks(self):
         return self.policy_net, self.target_net, self.memory
 
+def play_deep_agent_step(j, grid, player, testing, losses):
+    # learning phase
+    if not testing:
+        if j > 1:  # save transition only if there was a previous move in the same game
+            player.save_transition(grid, 0)
+        loss = player.compute_loss()
+        player.learn(loss)
+
+        # Update losses
+        if loss is not None:
+            losses.append(loss.item())
+
+    # move phase
+    move = player.act(grid) if not testing else player.act_test(grid)
+
+    return move, losses
+
 
 def play_deep_game(env, q_player, other_player, turns, other_learning=False, testing=False):
     # Update players
     q_player.set_player(turns[0])
     other_player.set_player(turns[1])
-    q_player.reset_attributes()
-    if other_learning:
-        other_player.reset_attributes()
     # Update env
     env.reset()
     grid, _, __ = env.observe()
-    average_loss = 0.
     losses = []
     for j in range(9):
         current_player = q_player if env.current_player == turns[0] else other_player
         if current_player == other_player:
             if other_learning:
-                move = other_player.act(grid, 0) if not testing else other_player.act_test(grid)
-                if not testing:
-                    loss = other_player.optimize_policy()
-                    if loss is not None:
-                        losses.append(loss.item())
+                move, losses = play_deep_agent_step(j, grid, other_player, testing, losses)
             else:
                 move = other_player.act(grid)
         else:
-            move = q_player.act(grid, 0) if not testing else q_player.act_test(grid)
-            if not testing:
-                loss = q_player.optimize_policy()
-                if loss is not None:
-                    losses.append(loss.item())
+            move, losses = play_deep_agent_step(j, grid, q_player, testing, losses)
+
         try:
             grid, end, winner = env.step(move, print_grid=False)
         except ValueError:
             if not testing:
-                current_player.act(None, -1)
-                loss = current_player.optimize_policy()
-                if loss is not None:
-                    losses.append(loss.item())
+                current_player.save_transition(None, -1)
             return losses, -1
         if end:
             break
     if not testing:
-        q_player.act(None, env.reward(turns[0]))
+        q_player.save_transition(None, env.reward(turns[0]))
         if other_learning:
-            other_player.act(None, env.reward(turns[1]))
+            other_player.save_transition(None, env.reward(turns[1]))
 
     return losses, env.reward(turns[0])
 
 
 class DeepVariableEpsilonQPlayer(DeepQPlayer):
 
-    def __init__(self, epsilon_max, epsilon_min, n_star, epsilon, gamma=0.99, lr=5e-4, capacity=10000, batch_size=64,
+    def __init__(self, epsilon_max, epsilon_min, n_star, epsilon, gamma=0.99, lr=5e-5, capacity=10000, batch_size=64,
                  shared_networks=None):
         super().__init__(epsilon, gamma=gamma, lr=lr, capacity=capacity, batch_size=batch_size,
                          shared_networks=shared_networks)
