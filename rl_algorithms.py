@@ -37,6 +37,12 @@ class QPlayer:
 
         return int(self.previous_action)
 
+    def update_learning_rate(self, episodes):
+        ratio = 0.9
+        update_frequency = 2500
+        if episodes % update_frequency == update_frequency - 1:
+            self.alpha *= ratio
+
     def learn(self, grid, reward, end):
         if not end:
             new_state = np.array2string(grid)
@@ -73,6 +79,8 @@ class QPlayer:
 
         return int(self.previous_action)
 
+    def set_player(self, player):
+        pass
 
 class VariableEpsilonQPlayer(QPlayer):
     """
@@ -93,9 +101,12 @@ class VariableEpsilonQPlayer(QPlayer):
         self.epsilon = max(self.epsilon_min, self.epsilon_max * (1 - current_episode / self.n_star))
 
 
-def play_game(env, q_player, other_player, turns, other_learning=False, testing=False):
+def play_game(env, q_player, other_player, turns, episodes, other_learning=False, testing=False):
     env.reset()
     grid, _, __ = env.observe()
+    q_player.update_learning_rate(episodes)
+    if other_learning:
+        other_player.update_learning_rate(episodes)
     for j in range(9):
         if env.current_player == turns[1]:
             if other_learning and j > 1 and not testing:  # if it's not the first time the QPlayer is playing
@@ -239,7 +250,7 @@ class DeepQPlayer:
         # Choose action with epsilon-greedy
         if np.random.random() >= self.epsilon:
             with torch.no_grad():
-                action = self.policy_net(state).argmax().int().item()
+                action = self.choose_best_action(state)
         else:
             action = int(np.random.choice(self.empty(grid)))
         self.action = action
@@ -250,9 +261,17 @@ class DeepQPlayer:
         state = self.grid_to_tensor(grid)
 
         with torch.no_grad():
-            action = self.policy_net(state).argmax().int().item()
+            action = self.choose_best_action(state)
 
         return action
+
+    def choose_best_action(self, state):
+        q_values = self.policy_net(state)
+        max_q_value, _ = torch.max(q_values, 0)
+        best_indices = torch.argwhere(q_values == max_q_value)
+        print(q_values)
+        print(np.random.choice(best_indices))
+        return np.random.choice(best_indices)
 
     def save_transition(self, grid, reward):
         # From grid to state tensor
