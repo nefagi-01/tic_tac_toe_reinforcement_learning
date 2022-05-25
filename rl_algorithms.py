@@ -218,6 +218,8 @@ class DeepQPlayer:
             self.memory = ReplayMemory(capacity)  # buffer
         self.criterion = nn.HuberLoss()
         self.optimizer = optim.Adam(self.policy_net.parameters(), lr=lr)  # optimizer used on policy_net
+        self.milestones = 100
+        self.scheduler = optim.MultiStepLR(optimizer, milestones=np.linspace(0,60000, num = self.milestones, dtype=int), gamma=0.1/self.milestones)
         self.batch_size = batch_size
         self.previous_state = None
         self.action = None
@@ -329,7 +331,7 @@ class DeepQPlayer:
         loss.backward()
         for param in self.policy_net.parameters():
             param.grad.data.clamp_(-1, 1)
-        self.optimizer.step()
+        self.scheduler.step()
 
     def update_target(self):
         self.target_net.load_state_dict(self.policy_net.state_dict())
