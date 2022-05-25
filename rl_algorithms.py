@@ -101,12 +101,13 @@ class VariableEpsilonQPlayer(QPlayer):
         self.epsilon = max(self.epsilon_min, self.epsilon_max * (1 - current_episode / self.n_star))
 
 
-def play_game(env, q_player, other_player, turns, episodes, other_learning=False, testing=False):
+def play_game(env, q_player, other_player, turns, episodes=None, other_learning=False, testing=False):
     env.reset()
     grid, _, __ = env.observe()
-    q_player.update_learning_rate(episodes)
-    if other_learning:
-        other_player.update_learning_rate(episodes)
+    if episodes != None:
+        q_player.update_learning_rate(episodes)
+        if other_learning:
+            other_player.update_learning_rate(episodes)
     for j in range(9):
         if env.current_player == turns[1]:
             if other_learning and j > 1 and not testing:  # if it's not the first time the QPlayer is playing
