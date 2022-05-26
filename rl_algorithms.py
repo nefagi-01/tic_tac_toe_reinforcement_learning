@@ -219,7 +219,7 @@ class DeepQPlayer:
         self.criterion = nn.HuberLoss()
         self.optimizer = optim.Adam(self.policy_net.parameters(), lr=lr)  # optimizer used on policy_net
         self.milestones = 100
-        self.scheduler = optim.MultiStepLR(optimizer, milestones=np.linspace(0,60000, num = self.milestones, dtype=int), gamma=0.1/self.milestones)
+        self.scheduler = optim.lr_scheduler.MultiStepLR(self.optimizer, milestones=np.linspace(0,60000, num = self.milestones, dtype=int), gamma=0.1/self.milestones)
         self.batch_size = batch_size
         self.previous_state = None
         self.action = None
@@ -272,9 +272,8 @@ class DeepQPlayer:
         q_values = self.policy_net(state)
         max_q_value, _ = torch.max(q_values, 0)
         best_indices = torch.argwhere(q_values == max_q_value)
-        print(q_values)
-        print(np.random.choice(best_indices))
-        return np.random.choice(best_indices)
+        best_action = np.random.choice(best_indices.view(-1))
+        return int(best_action)
 
     def save_transition(self, grid, reward):
         # From grid to state tensor
@@ -379,6 +378,7 @@ def play_deep_game(env, q_player, other_player, turns, other_learning=False, tes
             move, losses = play_deep_agent_step(j, grid, q_player, testing, losses)
 
         try:
+            print("move: ", move)
             grid, end, winner = env.step(move, print_grid=False)
         except ValueError:
             if not testing:
