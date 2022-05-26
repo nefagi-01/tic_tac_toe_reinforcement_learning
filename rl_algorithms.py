@@ -218,8 +218,8 @@ class DeepQPlayer:
             self.memory = ReplayMemory(capacity)  # buffer
         self.criterion = nn.HuberLoss()
         self.optimizer = optim.Adam(self.policy_net.parameters(), lr=lr)  # optimizer used on policy_net
-        self.milestones = 100
-        self.scheduler = optim.lr_scheduler.MultiStepLR(self.optimizer, milestones=np.linspace(0,60000, num = self.milestones, dtype=int), gamma=(1-np.sqrt(1/self.milestones)))
+        self.milestones = 10
+        self.scheduler = optim.lr_scheduler.MultiStepLR(self.optimizer, milestones=np.linspace(0,60000, num = self.milestones, dtype=int), gamma=0.6)
         self.batch_size = batch_size
         self.previous_state = None
         self.action = None
@@ -269,11 +269,12 @@ class DeepQPlayer:
         return action
 
     def choose_best_action(self, state):
-        q_values = self.policy_net(state)
-        max_q_value, _ = torch.max(q_values, 0)
-        best_indices = torch.argwhere(q_values == max_q_value)
-        best_action = np.random.choice(best_indices.view(-1))
-        return int(best_action)
+        with torch.no_grad():
+            q_values = self.policy_net(state)
+            max_q_value, _ = torch.max(q_values, 0)
+            best_indices = torch.argwhere(q_values == max_q_value)
+            best_action = np.random.choice(best_indices.view(-1))
+            return int(best_action)
 
     def save_transition(self, grid, reward):
         # From grid to state tensor
@@ -330,6 +331,7 @@ class DeepQPlayer:
         loss.backward()
         for param in self.policy_net.parameters():
             param.grad.data.clamp_(-1, 1)
+        self.optimizer.step()
         self.scheduler.step()
 
     def update_target(self):
