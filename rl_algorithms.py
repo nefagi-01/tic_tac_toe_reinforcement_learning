@@ -192,7 +192,7 @@ class DeepQPlayer:
         A class to implement a Deep Q-learning algorithm-based player.
     """
 
-    def __init__(self, epsilon, gamma=0.99, lr=5e-5, capacity=10000, batch_size=64, shared_networks=None):
+    def __init__(self, epsilon, gamma=0.99, lr=5e-4, capacity=10000, batch_size=64, shared_networks=None):
         # Algorithm parameters
         self.epsilon = epsilon
         self.gamma = gamma  # discount factor
@@ -219,7 +219,7 @@ class DeepQPlayer:
         self.criterion = nn.HuberLoss()
         self.optimizer = optim.Adam(self.policy_net.parameters(), lr=lr)  # optimizer used on policy_net
         self.milestones = 10
-        self.scheduler = optim.lr_scheduler.MultiStepLR(self.optimizer, milestones=np.linspace(0,60000, num = self.milestones, dtype=int), gamma=0.6)
+        self.scheduler = optim.lr_scheduler.MultiStepLR(self.optimizer, milestones=np.linspace(0,60000, num = self.milestones, dtype=int), gamma=0.9)
         self.batch_size = batch_size
         self.previous_state = None
         self.action = None
